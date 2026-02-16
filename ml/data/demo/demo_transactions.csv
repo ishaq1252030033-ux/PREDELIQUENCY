@@ -1,0 +1,75 @@
+customer_id,transaction_date,category,amount_inr,type,description
+DEMO01,2024-04-01 10:00:00,salary,72000,credit,Salary credit
+DEMO01,2024-05-01 10:00:00,salary,72000,credit,Salary credit
+DEMO01,2024-05-05 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-05 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-08 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-08 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-10 09:00:00,utility_water,600,debit,Water bill
+DEMO01,2024-05-12 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-12 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-14 14:00:00,discretionary_shopping,12000,debit,Shopping
+DEMO01,2024-05-15 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-15 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-18 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-18 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-20 10:00:00,atm_withdrawal,15000,debit,ATM withdrawal
+DEMO01,2024-05-22 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-22 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-06-02 10:00:00,utility_electricity,4200,debit,BESCOM
+DEMO01,2024-06-05 12:00:00,discretionary_restaurant,1200,debit,Restaurant
+DEMO01,2024-06-08 10:00:00,salary,72000,credit,Salary credit (delayed)
+DEMO01,2024-06-10 09:00:00,upi_lending_app,5000,debit,Loan repayment
+DEMO02,2024-04-01 10:00:00,salary,55000,credit,Salary credit
+DEMO02,2024-04-15 14:00:00,discretionary_restaurant,8000,debit,Dining
+DEMO02,2024-04-20 16:00:00,discretionary_entertainment,3000,debit,OTT
+DEMO02,2024-04-25 12:00:00,discretionary_shopping,10000,debit,Shopping
+DEMO02,2024-05-01 10:00:00,salary,55000,credit,Salary credit
+DEMO02,2024-05-10 09:00:00,atm_withdrawal,20000,debit,ATM
+DEMO02,2024-05-18 11:00:00,upi_lending_app,15000,debit,MoneyTap repayment
+DEMO02,2024-05-20 12:00:00,discretionary_restaurant,600,debit,Swiggy
+DEMO02,2024-05-25 10:00:00,utility_electricity,5200,debit,BESCOM
+DEMO02,2024-05-25 12:00:00,upi_lending_app,12000,debit,Paytm Postpaid
+DEMO02,2024-05-28 11:00:00,utility_phone,1200,debit,Airtel
+DEMO02,2024-06-01 10:00:00,salary,55000,credit,Salary credit
+DEMO02,2024-06-02 10:00:00,utility_water,800,debit,Water
+DEMO02,2024-06-03 09:00:00,atm_withdrawal,10000,debit,ATM
+DEMO02,2024-06-05 10:00:00,upi_lending_app,18000,debit,Bajaj Finserv
+DEMO02,2024-06-08 14:00:00,discretionary_restaurant,500,debit,Tea
+DEMO03,2024-04-01 10:00:00,salary,62000,credit,Salary credit
+DEMO03,2024-05-01 10:00:00,salary,62000,credit,Salary credit
+DEMO03,2024-05-05 12:00:00,discretionary_restaurant,1500,debit,Dining
+DEMO03,2024-05-08 14:00:00,discretionary_shopping,8000,debit,Shopping
+DEMO03,2024-05-10 12:00:00,discretionary_restaurant,1500,debit,Dining
+DEMO03,2024-05-12 10:00:00,utility_electricity,4100,debit,BESCOM
+DEMO03,2024-05-15 12:00:00,discretionary_restaurant,1500,debit,Dining
+DEMO03,2024-05-18 10:00:00,utility_water,550,debit,Water
+DEMO03,2024-05-20 12:00:00,discretionary_restaurant,1500,debit,Dining
+DEMO03,2024-05-22 09:00:00,atm_withdrawal,18000,debit,ATM
+DEMO03,2024-05-25 12:00:00,discretionary_restaurant,1500,debit,Dining
+DEMO03,2024-06-01 10:00:00,salary,62000,credit,Salary credit
+DEMO03,2024-06-05 14:00:00,discretionary_restaurant,2000,debit,Restaurant
+DEMO03,2024-06-08 09:00:00,atm_withdrawal,12000,debit,ATM
+DEMO03,2024-06-10 10:00:00,utility_electricity,4300,debit,BESCOM
+DEMO03,2024-06-14 10:00:00,utility_phone,1100,debit,Airtel
+DEMO04,2024-04-01 10:00:00,salary,95000,credit,Salary credit
+DEMO04,2024-05-01 10:00:00,salary,95000,credit,Salary credit
+DEMO04,2024-05-08 10:00:00,utility_electricity,5000,debit,BESCOM
+DEMO04,2024-05-12 12:00:00,discretionary_restaurant,2500,debit,Dining
+DEMO04,2024-05-15 10:00:00,discretionary_shopping,450000,debit,House down payment
+DEMO04,2024-06-01 10:00:00,salary,95000,credit,Salary credit
+DEMO04,2024-06-05 10:00:00,utility_electricity,4800,debit,BESCOM
+DEMO04,2024-06-10 12:00:00,discretionary_restaurant,1800,debit,Restaurant
+DEMO04,2024-06-12 14:00:00,discretionary_entertainment,999,debit,OTT
+DEMO05,2024-04-01 10:00:00,salary,85000,credit,Salary credit
+DEMO05,2024-05-01 10:00:00,salary,85000,credit,Salary credit
+DEMO05,2024-05-05 10:00:00,utility_electricity,3800,debit,BESCOM
+DEMO05,2024-05-06 10:00:00,utility_water,450,debit,Water
+DEMO05,2024-05-10 12:00:00,discretionary_restaurant,1200,debit,Dining
+DEMO05,2024-05-15 09:00:00,atm_withdrawal,5000,debit,ATM
+DEMO05,2024-05-18 14:00:00,discretionary_entertainment,599,debit,OTT
+DEMO05,2024-06-01 10:00:00,salary,85000,credit,Salary credit
+DEMO05,2024-06-05 10:00:00,utility_electricity,3600,debit,BESCOM
+DEMO05,2024-06-06 10:00:00,utility_phone,999,debit,Airtel
+DEMO05,2024-06-10 12:00:00,discretionary_restaurant,1100,debit,Dining
+DEMO05,2024-06-14 14:00:00,discretionary_shopping,2500,debit,Shopping

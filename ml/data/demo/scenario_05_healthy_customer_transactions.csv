@@ -1,0 +1,13 @@
+customer_id,transaction_date,category,amount_inr,type,description
+DEMO05,2024-04-01 10:00:00,salary,85000,credit,Salary credit
+DEMO05,2024-05-01 10:00:00,salary,85000,credit,Salary credit
+DEMO05,2024-06-01 10:00:00,salary,85000,credit,Salary credit
+DEMO05,2024-05-05 10:00:00,utility_electricity,3800,debit,BESCOM
+DEMO05,2024-05-06 10:00:00,utility_water,450,debit,Water
+DEMO05,2024-06-05 10:00:00,utility_electricity,3600,debit,BESCOM
+DEMO05,2024-06-06 10:00:00,utility_phone,999,debit,Airtel
+DEMO05,2024-05-10 12:00:00,discretionary_restaurant,1200,debit,Dining
+DEMO05,2024-05-18 14:00:00,discretionary_entertainment,599,debit,OTT
+DEMO05,2024-06-10 12:00:00,discretionary_restaurant,1100,debit,Dining
+DEMO05,2024-06-14 14:00:00,discretionary_shopping,2500,debit,Shopping
+DEMO05,2024-05-15 09:00:00,atm_withdrawal,5000,debit,ATM

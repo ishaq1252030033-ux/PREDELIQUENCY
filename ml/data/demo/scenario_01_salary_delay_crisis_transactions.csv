@@ -1,0 +1,22 @@
+customer_id,transaction_date,category,amount_inr,type,description
+DEMO01,2024-04-01 10:00:00,salary,72000,credit,Salary credit
+DEMO01,2024-05-01 10:00:00,salary,72000,credit,Salary credit
+DEMO01,2024-06-08 10:00:00,salary,72000,credit,Salary credit (delayed)
+DEMO01,2024-05-05 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-05 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-08 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-08 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-12 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-12 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-15 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-15 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-18 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-18 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-22 11:00:00,utility_electricity,4500,debit,BESCOM
+DEMO01,2024-05-22 12:00:00,discretionary_restaurant,800,debit,Swiggy
+DEMO01,2024-05-10 09:00:00,utility_water,600,debit,Water bill
+DEMO01,2024-05-14 14:00:00,discretionary_shopping,12000,debit,Shopping
+DEMO01,2024-05-20 10:00:00,atm_withdrawal,15000,debit,ATM withdrawal
+DEMO01,2024-06-02 10:00:00,utility_electricity,4200,debit,BESCOM
+DEMO01,2024-06-05 12:00:00,discretionary_restaurant,1200,debit,Restaurant
+DEMO01,2024-06-10 09:00:00,upi_lending_app,5000,debit,Loan repayment

@@ -1,0 +1,6 @@
+customer_id,customer_name,age,income_bracket,credit_score
+DEMO01,Priya Sharma,34,medium,648
+DEMO02,Raj Kumar,29,low,512
+DEMO03,Anita Verma,41,medium,588
+DEMO04,Rohit Patel,38,high,742
+DEMO05,Meera Singh,36,high,798

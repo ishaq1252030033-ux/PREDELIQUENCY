@@ -1,0 +1,10 @@
+customer_id,transaction_date,category,amount_inr,type,description
+DEMO04,2024-04-01 10:00:00,salary,95000,credit,Salary credit
+DEMO04,2024-05-01 10:00:00,salary,95000,credit,Salary credit
+DEMO04,2024-06-01 10:00:00,salary,95000,credit,Salary credit
+DEMO04,2024-05-15 10:00:00,discretionary_shopping,450000,debit,House down payment
+DEMO04,2024-05-08 10:00:00,utility_electricity,5000,debit,BESCOM
+DEMO04,2024-05-12 12:00:00,discretionary_restaurant,2500,debit,Dining
+DEMO04,2024-06-05 10:00:00,utility_electricity,4800,debit,BESCOM
+DEMO04,2024-06-10 12:00:00,discretionary_restaurant,1800,debit,Restaurant
+DEMO04,2024-06-12 14:00:00,discretionary_entertainment,999,debit,OTT
