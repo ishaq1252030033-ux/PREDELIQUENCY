@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 *.egg
+*.pyc
 
 # Virtual environments
 venv/
@@ -21,6 +22,8 @@ env/
 
 # Environment / secrets
 .env
+.env.*
+!.env.example
 
 # Databases
 *.db
@@ -28,6 +31,7 @@ env/
 
 # Logs
 logs/
+*.log
 
 # OS files
 Thumbs.db
@@ -46,5 +50,7 @@ ml/reports/*.json
 ml/reports/*.csv
 ml/data/processed/
 
-# Byte-compiled
-*.pyc
+# Node (if any frontend tooling is added later)
+node_modules/
+.npm
+.cache
