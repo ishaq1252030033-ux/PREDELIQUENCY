@@ -13,6 +13,7 @@ Environment variables:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -1203,615 +1204,464 @@ def page_customer_search() -> None:
 # =========================================================================
 
 
+def _hr_compute_emi_due(date_str: str) -> tuple[str, int]:
+    """Return (human label, days_left) for an EMI date string."""
+    if not date_str:
+        return ("", 999)
+    try:
+        days = (datetime.strptime(date_str, "%Y-%m-%d") - datetime.now()).days
+        if days < 0:
+            return (f"overdue {abs(days)}d", days)
+        if days == 0:
+            return ("due today", 0)
+        return (f"in {days}d", days)
+    except ValueError:
+        return (date_str, 999)
+
+
 def page_high_risk_customers() -> None:
-    """High-risk customers with filterable table, AI interventions, and tracking."""
-    st.title("\U0001f6a8 High-Risk Customers")
+    """Admin-driven batch intervention workflow for high-risk customers.
 
-    # Initialise intervention tracker in session state
-    if "hr_interventions_log" not in st.session_state:
-        st.session_state["hr_interventions_log"] = []
+    Flow:
+      1. Data Analysis  \u2192  auto-scored & enriched table
+      2. Admin Selection \u2192  choose how many to message
+      3. AI Generation   \u2192  personalised messages per customer
+      4. Review & Send   \u2192  approve, edit, then dispatch
+    """
+    st.title("\U0001f6a8 High-Risk Customers \u2014 Intervention Workflow")
 
-    # ------------------------------------------------------------------
-    # Filters
-    # ------------------------------------------------------------------
-    fc1, fc2, fc3 = st.columns([2, 1.5, 3])
+    # Session state keys
+    if "hr_batch_messages" not in st.session_state:
+        st.session_state["hr_batch_messages"] = {}
+    if "hr_sent_log" not in st.session_state:
+        st.session_state["hr_sent_log"] = []
+
+    # ==================================================================
+    # STEP 1 \u2014 DATA ANALYSIS (auto)
+    # ==================================================================
+    st.markdown(
+        "#### STEP 1 \u00a0\u2014\u00a0 Data Analysis",
+        help="Risk model scores all customers. Table is sorted by severity.",
+    )
+
+    fc1, fc2 = st.columns([2, 3])
     with fc1:
         threshold: int = st.slider(
-            "Risk score threshold",
+            "Risk threshold",
             min_value=0,
             max_value=100,
-            value=80,
-            step=1,
+            value=70,
+            step=5,
         )
     with fc2:
-        limit: int = st.number_input(
-            "Max customers",
-            min_value=1,
-            max_value=1000,
-            value=100,
-            step=10,
-        )
-    with fc3:
-        search_term: str = st.text_input(
-            "Search (Customer ID or Name)", ""
-        )
+        search_term: str = st.text_input("Filter by ID or name", "")
 
-    with st.spinner("Loading high-risk customers\u2026"):
+    with st.spinner("Running risk analysis on all customers\u2026"):
         data = api_get(
             "/high-risk-customers",
-            {"threshold": threshold, "limit": int(limit)},
+            {"threshold": threshold, "limit": 500},
         )
 
     if not isinstance(data, list) or not data:
-        st.info(
-            "No high-risk customers found for the current threshold."
-        )
+        st.info("No customers above the current risk threshold.")
         return
 
-    # ------------------------------------------------------------------
     # Build enriched dataframe
-    # ------------------------------------------------------------------
     risk_df = pd.DataFrame(data)
     customers_df = load_customers_csv()
     features_df = load_features_csv()
 
-    # Merge customer master (including EMI / installment fields)
-    _cust_merge_cols = [
-        "customer_id",
-        "customer_name",
-        "loan_type",
-        "emi_amount",
-        "next_emi_date",
-        "emi_remaining_months",
+    merge_cols = [
+        "customer_id", "customer_name", "loan_type",
+        "emi_amount", "next_emi_date", "emi_remaining_months",
     ]
     if not customers_df.empty:
-        avail = [c for c in _cust_merge_cols if c in customers_df.columns]
-        risk_df = risk_df.merge(
-            customers_df[avail],
-            on="customer_id",
-            how="left",
-        )
+        avail = [c for c in merge_cols if c in customers_df.columns]
+        risk_df = risk_df.merge(customers_df[avail], on="customer_id", how="left")
     if not features_df.empty and "avg_balance" in features_df.columns:
         risk_df = risk_df.merge(
-            features_df[["customer_id", "avg_balance"]],
-            on="customer_id",
-            how="left",
+            features_df[["customer_id", "avg_balance"]], on="customer_id", how="left",
         )
-
-    tx_df = load_transactions_csv()
-    if not tx_df.empty:
-        last_tx = (
-            tx_df.groupby("customer_id")["transaction_date"]
-            .max()
-            .rename("last_transaction_date")
-        )
-        risk_df = risk_df.merge(last_tx, on="customer_id", how="left")
 
     if search_term:
-        mask = risk_df["customer_id"].astype(str).str.contains(
-            search_term, case=False
-        )
+        mask = risk_df["customer_id"].astype(str).str.contains(search_term, case=False)
         if "customer_name" in risk_df:
-            mask |= (
-                risk_df["customer_name"]
-                .astype(str)
-                .str.contains(search_term, case=False)
-            )
+            mask |= risk_df["customer_name"].astype(str).str.contains(search_term, case=False)
         risk_df = risk_df[mask]
 
-    risk_df = risk_df.sort_values("risk_score", ascending=False)
+    risk_df = risk_df.sort_values("risk_score", ascending=False).reset_index(drop=True)
 
-    display_cols = [
-        "customer_id",
-        "customer_name",
-        "risk_score",
-        "risk_level",
-        "loan_type",
-        "emi_amount",
-        "next_emi_date",
-        "emi_remaining_months",
-        "top_risk_factors",
-        "last_transaction_date",
-        "avg_balance",
-    ]
-    display_df = risk_df.reindex(
-        columns=[c for c in display_cols if c in risk_df.columns]
-    )
-
-    # ------------------------------------------------------------------
-    # KPI row
-    # ------------------------------------------------------------------
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.metric("\U0001f465 Total High-Risk", len(display_df))
-    with k2:
-        critical_n = len(
-            display_df[display_df.get("risk_level", pd.Series()) == "critical"]
-        ) if "risk_level" in display_df.columns else 0
-        st.metric("\U0001f534 Critical", critical_n)
-    with k3:
-        avg_score = display_df["risk_score"].mean() if not display_df.empty else 0
-        st.metric("\U0001f4ca Avg Score", f"{avg_score:.1f}")
-    with k4:
-        sent_today = len(st.session_state["hr_interventions_log"])
-        st.metric("\U0001f4e8 Interventions Sent", sent_today)
-
-    # ------------------------------------------------------------------
-    # Filterable table
-    # ------------------------------------------------------------------
-    st.subheader(f"Customers ({len(display_df)})")
-
-    table_cols = [c for c in display_df.columns if c != "top_risk_factors"]
-    st.dataframe(
-        display_df[table_cols],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    # Downloads
-    dl1, dl2 = st.columns(2)
-    with dl1:
-        csv_bytes = display_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "\U0001f4e5 Download CSV",
-            data=csv_bytes,
-            file_name="high_risk_customers.csv",
-            mime="text/csv",
+    # Add EMI analysis columns
+    if "emi_amount" in risk_df.columns and "avg_balance" in risk_df.columns:
+        risk_df["emi_due"] = risk_df["next_emi_date"].fillna("").apply(
+            lambda d: _hr_compute_emi_due(d)[0]
         )
-    with dl2:
-        try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.pdfgen import canvas as rl_canvas
+        risk_df["balance_vs_emi"] = risk_df.apply(
+            lambda r: (
+                f"\u20b9{r['avg_balance'] - r['emi_amount']:,.0f}"
+                if r["emi_amount"] > 0
+                else "\u2014"
+            ),
+            axis=1,
+        )
+        risk_df["coverage"] = risk_df.apply(
+            lambda r: (
+                f"{r['avg_balance'] / r['emi_amount']:.1f}x"
+                if r["emi_amount"] > 0
+                else "\u2014"
+            ),
+            axis=1,
+        )
+        risk_df["can_pay"] = risk_df.apply(
+            lambda r: (
+                "\u2705" if r["emi_amount"] <= 0 or r["avg_balance"] >= r["emi_amount"]
+                else "\u274c"
+            ),
+            axis=1,
+        )
 
-            pdf_buffer = io.BytesIO()
-            c = rl_canvas.Canvas(pdf_buffer, pagesize=A4)
-            w_pdf, h_pdf = A4
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(40, h_pdf - 40, "High-Risk Customers Report")
-            c.setFont("Helvetica", 10)
-            c.drawString(
-                40, h_pdf - 60,
-                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            )
-            c.drawString(40, h_pdf - 75, f"Threshold: {threshold}")
-            c.drawString(
-                40, h_pdf - 90, f"Total customers: {len(display_df)}"
-            )
-            y_pdf = h_pdf - 120
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(40, y_pdf, "Top 10 Customers")
-            y_pdf -= 15
-            c.setFont("Helvetica", 9)
-            for _, row in display_df.head(10).iterrows():
-                line = (
-                    f"{row.get('customer_id')}  "
-                    f"{row.get('customer_name', '')}  |  "
-                    f"Score: {row.get('risk_score', 0):.1f}  "
-                    f"Level: {row.get('risk_level', '')}"
-                )
-                c.drawString(40, y_pdf, line[:110])
-                y_pdf -= 12
-                if y_pdf < 60:
-                    c.showPage()
-                    y_pdf = h_pdf - 60
-            c.showPage()
-            c.save()
-            pdf_buffer.seek(0)
-            st.download_button(
-                "\U0001f4c4 Download PDF Report",
-                data=pdf_buffer,
-                file_name="risk_report.pdf",
-                mime="application/pdf",
-            )
-        except ImportError:
-            pass
-        except Exception:
-            st.caption("PDF report unavailable.")
+    # KPI row
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        st.metric("\U0001f465 High-Risk", len(risk_df))
+    with k2:
+        n_crit = len(risk_df[risk_df.get("risk_level", pd.Series()) == "critical"]) if "risk_level" in risk_df.columns else 0
+        st.metric("\U0001f534 Critical", n_crit)
+    with k3:
+        st.metric("\U0001f4ca Avg Score", f"{risk_df['risk_score'].mean():.1f}")
+    with k4:
+        n_cant_pay = len(risk_df[risk_df.get("can_pay", pd.Series()) == "\u274c"]) if "can_pay" in risk_df.columns else 0
+        st.metric("\u274c Can't Cover EMI", n_cant_pay)
+    with k5:
+        st.metric("\U0001f4e8 Sent This Session", len(st.session_state["hr_sent_log"]))
 
-    # ------------------------------------------------------------------
-    # Per-customer AI Intervention
-    # ------------------------------------------------------------------
+    # Display table
+    show_cols = [
+        "customer_id", "customer_name", "risk_score", "risk_level",
+        "loan_type", "emi_amount", "emi_due", "avg_balance",
+        "balance_vs_emi", "coverage", "can_pay",
+    ]
+    show_cols = [c for c in show_cols if c in risk_df.columns]
+    st.dataframe(risk_df[show_cols], use_container_width=True, hide_index=True)
+
+    csv_bytes = risk_df[show_cols].to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "\U0001f4e5 Download Analysis CSV", data=csv_bytes,
+        file_name="high_risk_analysis.csv", mime="text/csv",
+    )
+
+    # ==================================================================
+    # STEP 2 \u2014 ADMIN SELECTION
+    # ==================================================================
     st.markdown("---")
-    st.subheader("\U0001f916 Trigger AI Intervention")
+    st.markdown(
+        "#### STEP 2 \u00a0\u2014\u00a0 Admin: Select Customers to Message",
+        help="Pick specific customers from the dropdown. Only selected customers will receive messages.",
+    )
 
-    if display_df.empty:
-        st.info("No customers to intervene on.")
+    # Build label for each customer so admin can identify them easily
+    _cid_labels: dict[str, str] = {}
+    for _, _r in risk_df.iterrows():
+        _cid = _r["customer_id"]
+        _cname = _r.get("customer_name", _cid)
+        _cscore = _r.get("risk_score", 0)
+        _emi = _r.get("emi_amount", 0)
+        _cpay = _r.get("can_pay", "")
+        _cid_labels[_cid] = (
+            f"{_cname} ({_cid}) \u2014 "
+            f"Risk: {_cscore:.0f}"
+            + (f" | EMI: \u20b9{_emi:,.0f} {_cpay}" if _emi > 0 else "")
+        )
+
+    sc1, sc2 = st.columns([3, 1.5])
+    with sc1:
+        selected_cids: list[str] = st.multiselect(
+            "Select customers to message",
+            options=risk_df["customer_id"].tolist(),
+            default=[],
+            format_func=lambda cid: _cid_labels.get(cid, cid),
+            key="admin_select_customers",
+            help="Pick one or more customers. Use the search box to filter.",
+        )
+    with sc2:
+        channel: str = st.selectbox(
+            "Channel",
+            ["sms", "email", "whatsapp"],
+            format_func=lambda x: {
+                "sms": "\U0001f4f1 SMS",
+                "email": "\U0001f4e7 Email",
+                "whatsapp": "\U0001f4ac WhatsApp",
+            }.get(x, x),
+            key="admin_channel",
+        )
+
+    # Quick-select helpers
+    qs1, qs2, qs3, qs4 = st.columns(4)
+    with qs1:
+        if st.button("Select All", key="sel_all"):
+            st.session_state["admin_select_customers"] = risk_df["customer_id"].tolist()
+            st.rerun()
+    with qs2:
+        if st.button("Select Top 10", key="sel_top10"):
+            st.session_state["admin_select_customers"] = risk_df["customer_id"].head(10).tolist()
+            st.rerun()
+    with qs3:
+        if st.button("Select Can't Pay EMI", key="sel_cantpay"):
+            cant_pay_ids = risk_df[risk_df.get("can_pay", pd.Series()) == "\u274c"]["customer_id"].tolist() if "can_pay" in risk_df.columns else []
+            st.session_state["admin_select_customers"] = cant_pay_ids
+            st.rerun()
+    with qs4:
+        if st.button("Clear Selection", key="sel_clear"):
+            st.session_state["admin_select_customers"] = []
+            st.rerun()
+
+    if not selected_cids:
+        st.info("Select one or more customers from the dropdown above.")
         return
 
-    ai_gen = st.session_state.get("ai_generator")
-    ai_ready: bool = ai_gen is not None
+    n_to_message = len(selected_cids)
+    selected_df = risk_df[risk_df["customer_id"].isin(selected_cids)].copy()
 
-    selected_cid: str = st.selectbox(
-        "Select a customer",
-        options=display_df["customer_id"].tolist(),
-        format_func=lambda cid: (
-            f"{cid} \u2014 "
-            f"{display_df.loc[display_df['customer_id'] == cid, 'customer_name'].iloc[0] if 'customer_name' in display_df.columns and not display_df.loc[display_df['customer_id'] == cid, 'customer_name'].empty else cid}"
-            f" (Score: {display_df.loc[display_df['customer_id'] == cid, 'risk_score'].iloc[0]:.0f})"
-        ),
-        key="hr_select_customer",
+    st.markdown(f"**{n_to_message} customer{'s' if n_to_message > 1 else ''} selected:**")
+
+    preview_cols = [
+        "customer_id", "customer_name", "risk_score",
+        "emi_amount", "emi_due", "avg_balance", "can_pay",
+    ]
+    preview_cols = [c for c in preview_cols if c in selected_df.columns]
+    st.dataframe(selected_df[preview_cols], use_container_width=True, hide_index=True)
+
+    # ==================================================================
+    # STEP 3 \u2014 GENERATE PERSONALISED MESSAGES
+    # ==================================================================
+    st.markdown("---")
+    st.markdown(
+        "#### STEP 3 \u00a0\u2014\u00a0 Generate Personalised Messages",
+        help="AI analyses each customer's risk factors, EMI, balance, and generates a tailored message.",
     )
 
-    sel_row = display_df[display_df["customer_id"] == selected_cid].iloc[0]
-    cust_name = str(sel_row.get("customer_name", selected_cid))
-    cust_score = float(sel_row.get("risk_score", 0))
-    cust_level = str(sel_row.get("risk_level", "high"))
-    cust_factors = sel_row.get("top_risk_factors", [])
-    if isinstance(cust_factors, str):
-        try:
-            cust_factors = json.loads(cust_factors)
-        except (json.JSONDecodeError, TypeError):
-            cust_factors = [cust_factors] if cust_factors else []
-    if not isinstance(cust_factors, list):
-        cust_factors = []
+    if st.button(
+        f"\U0001f916 Generate Messages for {n_to_message} Customers",
+        type="primary",
+        key="btn_batch_generate",
+    ):
+        batch_msgs: dict[str, dict[str, Any]] = {}
+        progress = st.progress(0, text="Generating personalised messages\u2026")
 
-    # EMI / installment info
-    cust_loan_type = str(sel_row.get("loan_type", ""))
-    cust_emi_amount = float(sel_row.get("emi_amount", 0))
-    cust_next_emi = str(sel_row.get("next_emi_date", ""))
-    cust_emi_remaining = int(sel_row.get("emi_remaining_months", 0))
-    cust_avg_balance = float(sel_row.get("avg_balance", 0))
+        for idx, (_, row) in enumerate(selected_df.iterrows()):
+            cid = row["customer_id"]
+            cname = str(row.get("customer_name", cid))
+            cscore = float(row.get("risk_score", 0))
+            clevel = str(row.get("risk_level", "high"))
 
-    # Compute days until next EMI
-    emi_due_label = ""
-    days_left = 999
-    if cust_next_emi:
-        try:
-            emi_dt = datetime.strptime(cust_next_emi, "%Y-%m-%d")
-            days_left = (emi_dt - datetime.now()).days
-            if days_left < 0:
-                emi_due_label = f"overdue by {abs(days_left)} days"
-            elif days_left == 0:
-                emi_due_label = "due today"
-            elif days_left <= 3:
-                emi_due_label = f"in {days_left} day{'s' if days_left > 1 else ''}"
-            else:
-                emi_due_label = f"in {days_left} days"
-        except ValueError:
-            emi_due_label = cust_next_emi
-
-    # EMI vs Balance analysis
-    emi_coverage_ratio: float = (
-        (cust_avg_balance / cust_emi_amount) if cust_emi_amount > 0 else 999.0
-    )
-    balance_shortfall: float = cust_avg_balance - cust_emi_amount
-
-    # Customer card — row 1: identity & risk
-    cc1, cc2, cc3 = st.columns(3)
-    with cc1:
-        st.markdown(f"**Customer:** {cust_name}")
-    with cc2:
-        level_colours = {
-            "critical": "\U0001f534",
-            "high": "\U0001f7e0",
-            "medium": "\U0001f7e1",
-            "low": "\U0001f7e2",
-        }
-        dot = level_colours.get(cust_level, "\u26aa")
-        st.markdown(
-            f"**Risk:** {dot} {cust_score:.0f}/100 ({cust_level})"
-        )
-    with cc3:
-        if cust_factors:
-            st.markdown(
-                f"**Factors:** {', '.join(str(f) for f in cust_factors[:3])}"
-            )
-
-    # Customer card — row 2: EMI vs Balance comparison
-    if cust_emi_amount > 0:
-        st.markdown(
-            "<div style='"
-            "background: rgba(255,255,255,0.03);"
-            "border: 1px solid rgba(255,255,255,0.08);"
-            "border-radius: 10px; padding: 14px 18px; margin: 8px 0 12px 0;"
-            "'>",
-            unsafe_allow_html=True,
-        )
-        eb1, eb2, eb3, eb4, eb5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
-        with eb1:
-            st.metric(
-                "\U0001f4b3 Next EMI",
-                f"\u20b9{cust_emi_amount:,.0f}",
-                delta=emi_due_label,
-                delta_color="inverse" if days_left <= 3 else "off",
-            )
-        with eb2:
-            st.metric(
-                "\U0001f3e6 Avg Balance",
-                f"\u20b9{cust_avg_balance:,.0f}",
-            )
-        with eb3:
-            if balance_shortfall >= 0:
-                st.metric(
-                    "\u2705 Surplus / Shortfall",
-                    f"\u20b9{balance_shortfall:,.0f}",
-                    delta="Can cover EMI",
-                    delta_color="normal",
-                )
-            else:
-                st.metric(
-                    "\u274c Surplus / Shortfall",
-                    f"-\u20b9{abs(balance_shortfall):,.0f}",
-                    delta="Cannot cover EMI",
-                    delta_color="inverse",
-                )
-        with eb4:
-            cov_label = f"{emi_coverage_ratio:.1f}x"
-            st.metric(
-                "\U0001f4ca Coverage Ratio",
-                cov_label,
-                delta=(
-                    "Healthy" if emi_coverage_ratio >= 2.0
-                    else "Tight" if emi_coverage_ratio >= 1.0
-                    else "At risk"
-                ),
-                delta_color=(
-                    "normal" if emi_coverage_ratio >= 2.0
-                    else "off" if emi_coverage_ratio >= 1.0
-                    else "inverse"
-                ),
-            )
-        with eb5:
-            st.markdown(
-                f"**{cust_loan_type}** \u2014 "
-                f"{cust_emi_remaining} months remaining"
-            )
-            # Visual bar: balance vs EMI
-            bar_pct = min(emi_coverage_ratio * 50, 100)
-            bar_clr = (
-                "#22c55e" if emi_coverage_ratio >= 2.0
-                else "#eab308" if emi_coverage_ratio >= 1.0
-                else "#ef4444"
-            )
-            st.markdown(
-                f"<div style='background:#1e1e1e;border-radius:6px;"
-                f"height:10px;width:100%;margin-top:6px;'>"
-                f"<div style='background:{bar_clr};border-radius:6px;"
-                f"height:10px;width:{bar_pct:.0f}%;'></div></div>"
-                f"<div style='font-size:11px;color:#8aa;margin-top:2px;'>"
-                f"Balance covers {emi_coverage_ratio:.1f}x of EMI</div>",
-                unsafe_allow_html=True,
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.info("No active loan / EMI for this customer.")
-
-    # --- Generate AI messages ---
-    intervention_key = f"hr_ai_msgs_{selected_cid}"
-
-    if ai_ready:
-        if st.button(
-            f"\U0001f514 Generate AI Messages for {cust_name.split()[0]}",
-            type="primary",
-            key=f"btn_ai_{selected_cid}",
-        ):
-            with st.spinner(
-                "\U0001f916 Llama 3.1 generating personalised messages\u2026"
-            ):
+            # Parse risk factors
+            factors = row.get("top_risk_factors", [])
+            if isinstance(factors, str):
                 try:
-                    msgs = ai_gen.generate_intervention_messages(
-                        customer_name=cust_name,
-                        risk_score=cust_score,
-                        risk_factors=[str(f) for f in cust_factors[:3]],
-                        payment_due_date=emi_due_label or "your next due date",
-                        payment_amount=cust_emi_amount,
-                    )
-                    st.session_state[intervention_key] = msgs
-                except Exception as exc:
-                    st.error(f"AI generation failed: {exc}")
-                    st.info("Make sure Ollama is running: `ollama serve`")
-    else:
-        # Fallback: generate via API or use template
-        if st.button(
-            f"\U0001f4dd Generate Message for {cust_name.split()[0] if cust_name else selected_cid}",
-            type="primary",
-            key=f"btn_tmpl_{selected_cid}",
-        ):
-            with st.spinner("Generating message\u2026"):
-                payload_gen: dict[str, Any] = {
-                    "customer_id": selected_cid,
-                    "customer_name": cust_name,
-                    "risk_score": cust_score,
-                    "risk_level": cust_level,
-                    "top_risk_factors": cust_factors,
-                    "channel": "app",
-                    "language": "en",
-                }
-                result = api_post("/generate-message", payload_gen)
-                if result:
-                    body = result.get("body", "")
-                    st.session_state[intervention_key] = {
-                        "sms": body[:160] if body else "",
-                        "email": {
-                            "subject": result.get("subject", "Payment Support"),
-                            "body": body,
-                        },
-                        "whatsapp": body,
-                        "app": body,
-                        "model": "template",
-                        "ai_generated": False,
-                        "total_latency_ms": 0,
-                    }
-                else:
-                    st.error("Message generation failed.")
+                    factors = json.loads(factors)
+                except Exception:
+                    factors = [factors] if factors else []
+            if not isinstance(factors, list):
+                factors = []
 
-        if not ai_ready:
-            st.caption(
-                "\u2139\ufe0f Install [Ollama](https://ollama.com) + "
-                "`ollama pull llama3.1` for FREE AI-generated messages. "
-                "Using template engine as fallback."
+            emi_amt = float(row.get("emi_amount", 0))
+            emi_date_str = str(row.get("next_emi_date", ""))
+            emi_label, _ = _hr_compute_emi_due(emi_date_str)
+            avg_bal = float(row.get("avg_balance", 0))
+            loan = str(row.get("loan_type", ""))
+
+            # Build context-aware message via API
+            payload: dict[str, Any] = {
+                "customer_id": cid,
+                "customer_name": cname,
+                "risk_score": cscore,
+                "risk_level": clevel,
+                "top_risk_factors": factors[:3],
+                "channel": channel,
+                "language": "en",
+            }
+            result = api_post("/generate-message", payload)
+
+            body = ""
+            subject = ""
+            if result:
+                body = result.get("body", "")
+                subject = result.get("subject", "")
+
+            # Enrich the message with EMI context
+            if emi_amt > 0 and body:
+                emi_note = (
+                    f" Your {loan} EMI of \u20b9{emi_amt:,.0f} is {emi_label}."
+                    f" Your current balance is \u20b9{avg_bal:,.0f}."
+                )
+                if avg_bal < emi_amt:
+                    emi_note += " We can help with flexible options."
+                body = body.rstrip(".") + "." + emi_note
+
+            batch_msgs[cid] = {
+                "customer_name": cname,
+                "risk_score": cscore,
+                "risk_level": clevel,
+                "emi_amount": emi_amt,
+                "avg_balance": avg_bal,
+                "emi_due": emi_label,
+                "loan_type": loan,
+                "channel": channel,
+                "subject": subject,
+                "body": body or f"Hi {cname.split()[0]}, we noticed changes in your account. Please contact us for support.",
+                "can_pay": "\u2705" if avg_bal >= emi_amt or emi_amt == 0 else "\u274c",
+            }
+
+            progress.progress(
+                (idx + 1) / n_to_message,
+                text=f"Generated {idx + 1}/{n_to_message}: {cname}",
             )
 
-    # --- Display generated messages in tabs ---
-    if intervention_key in st.session_state:
-        msgs = st.session_state[intervention_key]
-        is_ai = msgs.get("ai_generated", False)
-        model_label = msgs.get("model", "template")
-        latency = msgs.get("total_latency_ms", 0)
-
-        source_label = (
-            f"\U0001f916 AI ({model_label})"
-            if is_ai
-            else "\U0001f4dd Template"
-        )
+        progress.empty()
+        st.session_state["hr_batch_messages"] = batch_msgs
         st.success(
-            f"\u2705 Messages generated via {source_label}"
-            + (f" in {latency:.0f}ms" if latency else "")
+            f"\u2705 Generated personalised messages for **{len(batch_msgs)}** customers!"
         )
 
-        tab_sms, tab_email, tab_wa = st.tabs(
-            ["\U0001f4f1 SMS", "\U0001f4e7 Email", "\U0001f4ac WhatsApp"]
-        )
+    # ==================================================================
+    # STEP 4 \u2014 REVIEW & SEND
+    # ==================================================================
+    batch = st.session_state.get("hr_batch_messages", {})
+    if not batch:
+        return
 
-        # -- SMS --
-        with tab_sms:
-            sms_text = msgs.get("sms", "")
-            if isinstance(sms_text, dict):
-                sms_text = sms_text.get("body", "")
-            edited_sms: str = st.text_area(
-                "SMS message",
-                value=sms_text,
-                height=80,
-                max_chars=160,
-                key=f"edit_sms_{selected_cid}",
-            )
-            char_n = len(edited_sms)
-            clr = "green" if char_n <= 160 else "red"
-            st.caption(f":{clr}[**{char_n}**/160 characters]")
-            if st.button(
-                "\U0001f4e4 Send SMS",
-                key=f"send_sms_{selected_cid}",
-            ):
-                resp = api_post(
-                    "/intervention/trigger",
-                    {
-                        "customer_id": selected_cid,
-                        "intervention_type": "reminder",
-                        "channel": "sms",
-                        "message": edited_sms,
-                    },
-                )
-                if resp:
-                    st.success(f"\u2705 SMS sent to {cust_name}!")
-                    st.session_state["hr_interventions_log"].append(
-                        {
-                            "time": datetime.now().strftime("%H:%M:%S"),
-                            "customer": selected_cid,
-                            "channel": "SMS",
-                            "status": "Sent",
-                        }
-                    )
-                else:
-                    st.error("Failed to send SMS.")
+    st.markdown("---")
+    st.markdown(
+        "#### STEP 4 \u00a0\u2014\u00a0 Review & Send",
+        help="Review each personalised message. Edit if needed, then approve and send.",
+    )
 
-        # -- Email --
-        with tab_email:
-            email_data = msgs.get("email", {})
-            if isinstance(email_data, str):
-                email_data = {"subject": "", "body": email_data}
-            edited_subj: str = st.text_input(
-                "Subject",
-                value=email_data.get("subject", ""),
-                key=f"edit_esubj_{selected_cid}",
-            )
-            edited_body: str = st.text_area(
-                "Body",
-                value=email_data.get("body", ""),
-                height=180,
-                key=f"edit_ebody_{selected_cid}",
-            )
-            if st.button(
-                "\U0001f4e4 Send Email",
-                key=f"send_email_{selected_cid}",
-            ):
-                resp = api_post(
-                    "/intervention/trigger",
-                    {
-                        "customer_id": selected_cid,
-                        "intervention_type": "reminder",
-                        "channel": "email",
-                        "message": f"Subject: {edited_subj}\n\n{edited_body}",
-                    },
-                )
-                if resp:
-                    st.success(f"\u2705 Email sent to {cust_name}!")
-                    st.session_state["hr_interventions_log"].append(
-                        {
-                            "time": datetime.now().strftime("%H:%M:%S"),
-                            "customer": selected_cid,
-                            "channel": "Email",
-                            "status": "Sent",
-                        }
-                    )
-                else:
-                    st.error("Failed to send email.")
+    # Summary table of all generated messages
+    summary_rows = []
+    for cid, m in batch.items():
+        summary_rows.append({
+            "Customer": f"{m['customer_name']} ({cid})",
+            "Risk": f"{m['risk_score']:.0f}",
+            "EMI": f"\u20b9{m['emi_amount']:,.0f}" if m["emi_amount"] > 0 else "\u2014",
+            "Balance": f"\u20b9{m['avg_balance']:,.0f}",
+            "Can Pay": m["can_pay"],
+            "Channel": m["channel"].upper(),
+            "Message Preview": m["body"][:80] + ("\u2026" if len(m["body"]) > 80 else ""),
+        })
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
-        # -- WhatsApp --
-        with tab_wa:
-            wa_text = msgs.get("whatsapp", "")
-            if isinstance(wa_text, dict):
-                wa_text = wa_text.get("body", "")
-            edited_wa: str = st.text_area(
-                "WhatsApp message",
-                value=wa_text,
-                height=120,
-                key=f"edit_wa_{selected_cid}",
-            )
-            if st.button(
-                "\U0001f4e4 Send WhatsApp",
-                key=f"send_wa_{selected_cid}",
-            ):
-                resp = api_post(
-                    "/intervention/trigger",
-                    {
-                        "customer_id": selected_cid,
-                        "intervention_type": "reminder",
-                        "channel": "whatsapp",
-                        "message": edited_wa,
-                    },
-                )
-                if resp:
-                    st.success(f"\u2705 WhatsApp sent to {cust_name}!")
-                    st.session_state["hr_interventions_log"].append(
-                        {
-                            "time": datetime.now().strftime("%H:%M:%S"),
-                            "customer": selected_cid,
-                            "channel": "WhatsApp",
-                            "status": "Sent",
-                        }
-                    )
-                else:
-                    st.error("Failed to send WhatsApp message.")
-
-        # AI footer
-        st.markdown("---")
-        if is_ai:
-            st.caption(
-                f"\U0001f916 Powered by **{model_label}** (Meta) \u2014 "
-                "FREE & Open Source | \U0001f512 100% Private"
-            )
-
-        # Regenerate
-        if st.button(
-            "\U0001f504 Regenerate",
-            key=f"regen_{selected_cid}",
+    # Expandable per-customer message editor
+    st.markdown("**Click to review / edit individual messages:**")
+    for cid, m in batch.items():
+        with st.expander(
+            f"{m['customer_name']} \u2014 Score: {m['risk_score']:.0f} | "
+            f"EMI: \u20b9{m['emi_amount']:,.0f} | "
+            f"Balance: \u20b9{m['avg_balance']:,.0f} {m['can_pay']}"
         ):
-            st.session_state.pop(intervention_key, None)
-            st.rerun()
+            if m.get("subject"):
+                batch[cid]["subject"] = st.text_input(
+                    "Subject", value=m["subject"], key=f"subj_{cid}",
+                )
+            batch[cid]["body"] = st.text_area(
+                "Message", value=m["body"], height=120, key=f"body_{cid}",
+            )
 
-    # ------------------------------------------------------------------
-    # Intervention tracking log
-    # ------------------------------------------------------------------
-    if st.session_state["hr_interventions_log"]:
+    # Send all button
+    st.markdown("---")
+    sc1, sc2 = st.columns([3, 1])
+    with sc1:
+        st.markdown(
+            f"**Ready to send {len(batch)} messages via "
+            f"{list(batch.values())[0]['channel'].upper()}?**"
+        )
+    with sc2:
+        send_all = st.button(
+            f"\U0001f680 Send All {len(batch)} Messages",
+            type="primary",
+            key="btn_send_all",
+        )
+
+    if send_all:
+        success_n = 0
+        fail_n = 0
+        progress = st.progress(0, text="Sending interventions\u2026")
+
+        for idx, (cid, m) in enumerate(batch.items()):
+            msg_text = m["body"]
+            if m.get("subject"):
+                msg_text = f"Subject: {m['subject']}\n\n{msg_text}"
+
+            resp = api_post(
+                "/intervention/trigger",
+                {
+                    "customer_id": cid,
+                    "intervention_type": "reminder",
+                    "channel": m["channel"],
+                    "message": msg_text,
+                },
+            )
+            if resp:
+                success_n += 1
+                st.session_state["hr_sent_log"].append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "customer_id": cid,
+                    "customer_name": m["customer_name"],
+                    "risk_score": m["risk_score"],
+                    "channel": m["channel"].upper(),
+                    "emi": f"\u20b9{m['emi_amount']:,.0f}" if m["emi_amount"] > 0 else "\u2014",
+                    "can_pay": m["can_pay"],
+                    "status": "\u2705 Sent",
+                })
+            else:
+                fail_n += 1
+                st.session_state["hr_sent_log"].append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "customer_id": cid,
+                    "customer_name": m["customer_name"],
+                    "risk_score": m["risk_score"],
+                    "channel": m["channel"].upper(),
+                    "emi": f"\u20b9{m['emi_amount']:,.0f}" if m["emi_amount"] > 0 else "\u2014",
+                    "can_pay": m["can_pay"],
+                    "status": "\u274c Failed",
+                })
+
+            progress.progress(
+                (idx + 1) / len(batch),
+                text=f"Sent {idx + 1}/{len(batch)}\u2026",
+            )
+
+        progress.empty()
+        st.session_state["hr_batch_messages"] = {}
+
+        if fail_n == 0:
+            st.success(
+                f"\u2705 All **{success_n}** interventions sent successfully!"
+            )
+            st.balloons()
+        else:
+            st.warning(
+                f"{success_n} sent, {fail_n} failed. Check backend logs."
+            )
+
+    # ==================================================================
+    # Intervention log
+    # ==================================================================
+    if st.session_state["hr_sent_log"]:
         st.markdown("---")
-        st.subheader("\U0001f4cb Intervention Log (this session)")
-        log_df = pd.DataFrame(st.session_state["hr_interventions_log"])
+        st.subheader("\U0001f4cb Intervention Log")
+        log_df = pd.DataFrame(st.session_state["hr_sent_log"])
         st.dataframe(log_df, use_container_width=True, hide_index=True)
-        if st.button(
-            "\U0001f5d1\ufe0f Clear log", key="btn_clear_log"
-        ):
-            st.session_state["hr_interventions_log"] = []
-            st.rerun()
+
+        lc1, lc2 = st.columns(2)
+        with lc1:
+            st.metric(
+                "Total Sent",
+                len([r for r in st.session_state["hr_sent_log"] if "\u2705" in r["status"]]),
+            )
+        with lc2:
+            if st.button("\U0001f5d1\ufe0f Clear Log", key="btn_clear_log"):
+                st.session_state["hr_sent_log"] = []
+                st.rerun()
 
 
 # =========================================================================
@@ -5042,8 +4892,146 @@ _NAV_ITEMS: list[tuple[str, str, Any, str]] = [
 PAGES: dict[str, Any] = {label: func for _, label, func, _ in _NAV_ITEMS}
 
 
+# =========================================================================
+# Login / Authentication
+# =========================================================================
+
+# Admin credentials (in production, use a proper auth service / database)
+# Passwords are stored as SHA-256 hashes for basic security.
+_ADMIN_USERS: dict[str, dict[str, str]] = {
+    "admin": {
+        "password_hash": hashlib.sha256("admin123".encode()).hexdigest(),
+        "name": "Bank Admin",
+        "role": "Administrator",
+    },
+    "manager": {
+        "password_hash": hashlib.sha256("manager123".encode()).hexdigest(),
+        "name": "Risk Manager",
+        "role": "Risk Manager",
+    },
+    "analyst": {
+        "password_hash": hashlib.sha256("analyst123".encode()).hexdigest(),
+        "name": "Data Analyst",
+        "role": "Analyst",
+    },
+}
+
+
+def _render_login_page() -> bool:
+    """Render the login page and return ``True`` if user is authenticated.
+
+    Returns:
+        ``True`` when the user has a valid session, ``False`` otherwise.
+    """
+    if st.session_state.get("authenticated"):
+        return True
+
+    # Full-screen centred login card
+    st.markdown(
+        "<style>"
+        "[data-testid='stSidebar'] { display: none !important; }"
+        "[data-testid='stHeader'] { display: none !important; }"
+        "section.main > div { max-width: 480px; margin: auto; padding-top: 8vh; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div style='"
+        "text-align:center;padding:30px 0 10px 0;"
+        "'>"
+        "<div style='"
+        "font-size:56px;line-height:1;margin-bottom:8px;"
+        "'>\U0001f6e1\ufe0f</div>"
+        "<div style='"
+        f"font-size:22px;font-weight:800;color:{PRIMARY_COLOR};"
+        "letter-spacing:0.5px;line-height:1.3;"
+        "'>PRE-DELINQUENCY</div>"
+        "<div style='"
+        "font-size:13px;color:#6c8fa7;font-weight:500;"
+        "letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;"
+        "'>Intervention Engine</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div style='"
+        "background: rgba(255,255,255,0.03);"
+        "border: 1px solid rgba(2,128,144,0.25);"
+        "border-radius: 14px;"
+        "padding: 30px 35px 25px 35px;"
+        "margin-top: 20px;"
+        "'>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<h3 style='text-align:center;margin-bottom:20px;"
+        "color:#e0e0e0;font-weight:600;'>"
+        "\U0001f512 Bank Admin Login</h3>",
+        unsafe_allow_html=True,
+    )
+
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input(
+            "Username",
+            placeholder="Enter your username",
+            key="login_username",
+        )
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Enter your password",
+            key="login_password",
+        )
+        submitted = st.form_submit_button(
+            "\U0001f513 Sign In", use_container_width=True
+        )
+
+    if submitted:
+        if not username or not password:
+            st.error("Please enter both username and password.")
+        else:
+            user = _ADMIN_USERS.get(username.lower().strip())
+            pw_hash = hashlib.sha256(password.encode()).hexdigest()
+            if user and user["password_hash"] == pw_hash:
+                st.session_state["authenticated"] = True
+                st.session_state["user_name"] = user["name"]
+                st.session_state["user_role"] = user["role"]
+                st.session_state["user_id"] = username.lower().strip()
+                st.session_state["login_time"] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                st.rerun()
+            else:
+                st.error(
+                    "\u274c Invalid username or password. Please try again."
+                )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown(
+        "<div style='"
+        "text-align:center;margin-top:24px;font-size:12px;color:#4a6a7a;"
+        "'>"
+        "\U0001f512 Secure access \u2022 All sessions are encrypted<br>"
+        "<span style='font-size:11px;color:#3a5a6a;'>"
+        "Demo credentials: admin / admin123</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    return False
+
+
 def main() -> None:
-    """Streamlit app entry point with enhanced sidebar navigation."""
+    """Streamlit app entry point with login gate and sidebar navigation."""
+
+    # --- Authentication gate ---
+    if not _render_login_page():
+        return
+
     with st.sidebar:
         # --- Branded header ---
         st.markdown(
@@ -5064,6 +5052,31 @@ def main() -> None:
             "</div>",
             unsafe_allow_html=True,
         )
+
+        # --- Logged-in user info ---
+        _uname = st.session_state.get("user_name", "Admin")
+        _urole = st.session_state.get("user_role", "")
+        st.markdown(
+            f"<div style='"
+            f"background:rgba(2,128,144,0.1);"
+            f"border:1px solid rgba(2,128,144,0.25);"
+            f"border-radius:8px;padding:8px 12px;margin:6px 0 10px 0;"
+            f"font-size:12px;"
+            f"'>"
+            f"\U0001f464 <b style='color:#e0e0e0;'>{_uname}</b><br>"
+            f"<span style='color:#6c8fa7;font-size:11px;'>"
+            f"{_urole} \u2022 "
+            f"Logged in {st.session_state.get('login_time', '')}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("\U0001f6aa Logout", key="btn_logout", use_container_width=True):
+            for key in [
+                "authenticated", "user_name", "user_role",
+                "user_id", "login_time",
+            ]:
+                st.session_state.pop(key, None)
+            st.rerun()
 
         st.markdown(
             "<hr style='margin:10px 0;border:none;"
