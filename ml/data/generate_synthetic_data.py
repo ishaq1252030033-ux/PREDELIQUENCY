@@ -73,7 +73,7 @@ TX_CATEGORIES = {
 
 
 def generate_customers(n: int) -> pd.DataFrame:
-    """Generate customer profiles with Indian names, age, income_bracket, credit_score."""
+    """Generate customer profiles with Indian names, age, income, credit score, and EMI details."""
     customer_ids = [f"C{i:06d}" for i in range(1, n + 1)]
     names = [
         f"{random.choice(FIRST_NAMES)} {random.choice(SURNAMES)}"
@@ -93,12 +93,65 @@ def generate_customers(n: int) -> pd.DataFrame:
         900,
     ).astype(int)
 
+    # --- EMI / Installment details ---
+    # ~80% of customers have an active loan with EMI
+    has_emi = np.random.random(n) < 0.80
+
+    loan_types = ["Home Loan", "Personal Loan", "Car Loan", "Education Loan", "Two-Wheeler Loan"]
+    loan_type_weights = [0.30, 0.35, 0.15, 0.10, 0.10]
+
+    emi_loan_types: list[str] = []
+    emi_amounts: list[float] = []
+    emi_due_dates: list[str] = []
+    emi_remaining: list[int] = []
+
+    # EMI amount ranges by loan type (INR)
+    emi_ranges = {
+        "Home Loan": (15_000, 60_000),
+        "Personal Loan": (3_000, 25_000),
+        "Car Loan": (8_000, 35_000),
+        "Education Loan": (5_000, 20_000),
+        "Two-Wheeler Loan": (2_000, 8_000),
+    }
+
+    # Next EMI due date: between 1 and 30 days from "today" (relative to data end date)
+    ref_date = END_DATE + timedelta(days=1)
+
+    for i in range(n):
+        if has_emi[i]:
+            lt = random.choices(loan_types, weights=loan_type_weights, k=1)[0]
+            emi_loan_types.append(lt)
+            lo, hi = emi_ranges[lt]
+            emi_amounts.append(round(random.randint(lo, hi), -2))  # round to nearest 100
+            # Due date: common EMI dates are 1st, 5th, 10th, 15th, 20th of month
+            emi_day = random.choice([1, 5, 7, 10, 15, 20, 25])
+            # Next due date: find the next occurrence of emi_day from ref_date
+            if ref_date.day <= emi_day:
+                due = ref_date.replace(day=emi_day)
+            else:
+                # Next month
+                if ref_date.month == 12:
+                    due = ref_date.replace(year=ref_date.year + 1, month=1, day=emi_day)
+                else:
+                    due = ref_date.replace(month=ref_date.month + 1, day=min(emi_day, 28))
+            emi_due_dates.append(due.strftime("%Y-%m-%d"))
+            emi_remaining.append(random.randint(6, 240))
+        else:
+            emi_loan_types.append("")
+            emi_amounts.append(0)
+            emi_due_dates.append("")
+            emi_remaining.append(0)
+
     return pd.DataFrame({
         "customer_id": customer_ids,
         "customer_name": names,
         "age": ages,
         "income_bracket": income_brackets,
         "credit_score": credit_scores,
+        "loan_type": emi_loan_types,
+        "emi_amount": emi_amounts,
+        "next_emi_date": emi_due_dates,
+        "emi_remaining_months": emi_remaining,
     })
 
 

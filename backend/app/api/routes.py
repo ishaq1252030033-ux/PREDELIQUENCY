@@ -812,3 +812,125 @@ async def websocket_updates(websocket: WebSocket) -> None:
                 break
     finally:
         ws_manager.disconnect(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — AI Message Generation (Ollama / Llama 3.1)
+# ---------------------------------------------------------------------------
+
+
+class AIGenerateRequest(BaseModel):
+    """Request body for AI-powered message generation."""
+
+    customer_name: str = Field(..., description="Customer display name.")
+    risk_score: float = Field(..., ge=0, le=100)
+    risk_level: str = Field(..., description="low | medium | high | critical")
+    top_risk_factors: List[str] = Field(default_factory=list)
+    channel: str = Field(default="app", description="sms | email | app")
+    language: str = Field(default="en", description="en | hi")
+    scenario: Optional[str] = Field(default=None)
+    salary_delay_days: Optional[int] = None
+    savings_drop_pct: Optional[float] = None
+    lending_app_count: Optional[int] = None
+    lending_app_amount: Optional[float] = None
+    failed_payment_count: Optional[int] = None
+    upcoming_emi_amount: Optional[float] = None
+    upcoming_emi_date: Optional[str] = None
+    model: Optional[str] = Field(
+        default=None, description="Override the Ollama model (e.g. llama3.1, mistral)."
+    )
+
+
+@router.post(
+    "/ai/generate-message",
+    status_code=status.HTTP_200_OK,
+    summary="Generate message using local AI (Ollama / Llama 3.1)",
+    response_description="AI-generated personalised intervention message.",
+)
+def ai_generate_message(req: AIGenerateRequest) -> dict[str, Any]:
+    """Generate a personalised intervention message using a local LLM.
+
+    Uses Ollama running locally with Llama 3.1 (or any pulled model).
+    100 % free, no API keys, fully private.
+
+    Args:
+        req: Customer context and generation parameters.
+
+    Returns:
+        Dict with ``subject``, ``body``, ``model``, ``ai_generated``,
+        and ``tokens_used``.
+
+    Raises:
+        HTTPException: 503 if Ollama is not running or model not pulled.
+    """
+    from backend.app.services.ai_message_generator import generate_ai_message
+
+    try:
+        result = generate_ai_message(
+            customer_name=req.customer_name,
+            risk_score=req.risk_score,
+            risk_level=req.risk_level,
+            top_risk_factors=req.top_risk_factors,
+            channel=req.channel,
+            language=req.language,
+            scenario=req.scenario,
+            salary_delay_days=req.salary_delay_days,
+            savings_drop_pct=req.savings_drop_pct,
+            lending_app_count=req.lending_app_count,
+            lending_app_amount=req.lending_app_amount,
+            failed_payment_count=req.failed_payment_count,
+            upcoming_emi_amount=req.upcoming_emi_amount,
+            upcoming_emi_date=req.upcoming_emi_date,
+            model=req.model,
+        )
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("AI message generation failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI generation error: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/ai/status",
+    status_code=status.HTTP_200_OK,
+    summary="Check Ollama / AI service availability",
+    response_description="Status of the local AI service and available models.",
+)
+def ai_status() -> dict[str, Any]:
+    """Check whether the local Ollama instance is running and which models are available.
+
+    Returns:
+        Dict with ``available``, ``models``, ``default_model``, and ``host``.
+    """
+    from backend.app.services.ai_message_generator import (
+        OLLAMA_HOST,
+        OLLAMA_MODEL,
+        is_ollama_available,
+        list_available_models,
+    )
+
+    available = is_ollama_available()
+    models = list_available_models() if available else []
+
+    return {
+        "available": available,
+        "models": models,
+        "default_model": OLLAMA_MODEL,
+        "host": OLLAMA_HOST,
+        "setup_instructions": (
+            (
+                "1. Install Ollama: https://ollama.com\n"
+                "2. Pull a model: ollama pull llama3.1\n"
+                "3. Start server: ollama serve"
+            )
+            if not available
+            else None
+        ),
+    }
